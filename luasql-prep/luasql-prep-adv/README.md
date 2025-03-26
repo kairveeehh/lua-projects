@@ -46,4 +46,6 @@ The extension includes five custom LuaSQL-like functions:
   Retrieve results from the executed statement.
 
 ---
+## output screenshots
+![alt text](<Screenshot from 2025-03-26 15-40-19.png>)
 

@@ -32,7 +32,7 @@ static int l_connect(lua_State *L) {
     return 1;
 }
 
-// Prepare statement
+// prepare statement
 static int l_prepare(lua_State *L) {
     MySQLConn *conn = (MySQLConn *)luaL_checkudata(L, 1, "MySQLConn");
     const char *query = luaL_checkstring(L, 2);
@@ -52,7 +52,7 @@ static int l_prepare(lua_State *L) {
     return 1;
 }
 
-// Bind parameter (only integer for simplicity)
+// bind parameter rn for int only
 static int l_bind(lua_State *L) {
     MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
     int index = luaL_checkinteger(L, 2) - 1;  // Lua index starts at 1
@@ -69,7 +69,7 @@ static int l_bind(lua_State *L) {
     return 0;
 }
 
-// Execute statement
+// execute statement
 static int l_execute(lua_State *L) {
     MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
 
@@ -83,7 +83,7 @@ static int l_execute(lua_State *L) {
     return 1;
 }
 
-// Fetch (just success/fail for now)
+// fetch binary for now
 static int l_fetch(lua_State *L) {
     MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
     MYSQL_RES *prepare_meta_result = mysql_stmt_result_metadata(stmt->stmt);
@@ -112,7 +112,7 @@ static int l_fetch(lua_State *L) {
     return 1;
 }
 
-// Register functions
+// register functions
 static const luaL_Reg mysqlprep[] = {
     {"connect", l_connect},
     {"prepare", l_prepare},
