@@ -24,7 +24,12 @@ mysql.execute(select_stmt)
 -- Fetch the result
 print("Fetching data:")
 local age_list = mysql.fetch(select_stmt)
+
 while age_list do
-    print("Age:", table.concat(age_list, ", "))
+    if type(age_list) == "table" then
+        print(table.concat(age_list, ", "))  -- Works if fetch returns a table
+    else
+        print(age_list)  -- Works if fetch returns a single value
+    end
     age_list = mysql.fetch(select_stmt)
 end
