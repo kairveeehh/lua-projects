@@ -10,7 +10,7 @@ typedef struct {
 
 typedef struct {
     MYSQL_STMT *stmt;
-    MYSQL_BIND bind[10];
+    MYSQL_BIND *bind;
     int param_count;
 } MySQLStmt;
 
@@ -32,48 +32,60 @@ static int l_connect(lua_State *L) {
     return 1;
 }
 
-// prepare statement
+// Prepare statement
 static int l_prepare(lua_State *L) {
     MySQLConn *conn = (MySQLConn *)luaL_checkudata(L, 1, "MySQLConn");
     const char *query = luaL_checkstring(L, 2);
 
     MySQLStmt *stmt = (MySQLStmt *)lua_newuserdata(L, sizeof(MySQLStmt));
     stmt->stmt = mysql_stmt_init(conn->conn);
+    if (!stmt->stmt) {
+        return luaL_error(L, "Failed to initialize statement");
+    }
 
     if (mysql_stmt_prepare(stmt->stmt, query, strlen(query)) != 0) {
         return luaL_error(L, "Prepare failed: %s", mysql_stmt_error(stmt->stmt));
     }
 
     stmt->param_count = mysql_stmt_param_count(stmt->stmt);
-    memset(stmt->bind, 0, sizeof(stmt->bind));
+    stmt->bind = calloc(stmt->param_count, sizeof(MYSQL_BIND));
 
     luaL_getmetatable(L, "MySQLStmt");
     lua_setmetatable(L, -2);
     return 1;
 }
 
-// bind parameter rn for int only
 static int l_bind(lua_State *L) {
     MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
-    int index = luaL_checkinteger(L, 2) - 1;  // Lua index starts at 1
-    int val = luaL_checkinteger(L, 3);
 
-    if (index >= stmt->param_count || index < 0) {
-        return luaL_error(L, "Invalid bind index");
+    int num_params = stmt->param_count;
+    int provided_params = lua_gettop(L) - 1;
+
+    if (provided_params != num_params) {
+        return luaL_error(L, "Expected %d parameters, got %d", num_params, provided_params);
     }
 
-    stmt->bind[index].buffer_type = MYSQL_TYPE_LONG;
-    stmt->bind[index].buffer = malloc(sizeof(int));
-    memcpy(stmt->bind[index].buffer, &val, sizeof(int));
+    for (int i = 0; i < num_params; i++) {
+        if (!lua_isinteger(L, i + 2)) {
+            return luaL_error(L, "Parameter %d must be an integer", i + 1);
+        }
+
+        int val = lua_tointeger(L, i + 2);
+        stmt->bind[i].buffer_type = MYSQL_TYPE_LONG;
+        stmt->bind[i].buffer = malloc(sizeof(int));
+        memcpy(stmt->bind[i].buffer, &val, sizeof(int));
+    }
+
+    if (mysql_stmt_bind_param(stmt->stmt, stmt->bind) != 0) {
+        return luaL_error(L, "Binding failed: %s", mysql_stmt_error(stmt->stmt));
+    }
 
     return 0;
 }
 
-// execute statement
+// Execute statement
 static int l_execute(lua_State *L) {
     MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
-
-    mysql_stmt_bind_param(stmt->stmt, stmt->bind);
 
     if (mysql_stmt_execute(stmt->stmt) != 0) {
         return luaL_error(L, "Execute failed: %s", mysql_stmt_error(stmt->stmt));
@@ -83,48 +95,73 @@ static int l_execute(lua_State *L) {
     return 1;
 }
 
-// fetch binary for now
+// Fetch results (integer columns only)
 static int l_fetch(lua_State *L) {
     MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
-    MYSQL_RES *prepare_meta_result = mysql_stmt_result_metadata(stmt->stmt);
-    if (!prepare_meta_result) {
-        lua_pushstring(L, "No result");
+
+    MYSQL_RES *meta_result = mysql_stmt_result_metadata(stmt->stmt);
+    if (!meta_result) {
+        lua_pushnil(L);
         return 1;
     }
-    MYSQL_FIELD *fields = mysql_fetch_fields(prepare_meta_result);
-    MYSQL_BIND result_bind[10];
-    memset(result_bind, 0, sizeof(result_bind));
-    int result[10];
 
-    for (int i = 0; i < mysql_num_fields(prepare_meta_result); i++) {
+    int num_fields = mysql_num_fields(meta_result);
+    MYSQL_BIND *result_bind = calloc(num_fields, sizeof(MYSQL_BIND));
+    int *results = calloc(num_fields, sizeof(int));
+
+    for (int i = 0; i < num_fields; i++) {
         result_bind[i].buffer_type = MYSQL_TYPE_LONG;
-        result_bind[i].buffer = &result[i];
+        result_bind[i].buffer = &results[i];
     }
 
     mysql_stmt_bind_result(stmt->stmt, result_bind);
     if (mysql_stmt_fetch(stmt->stmt) == 0) {
-        lua_pushinteger(L, result[0]); // returning the first column
+        lua_newtable(L);
+        for (int i = 0; i < num_fields; i++) {
+            lua_pushinteger(L, results[i]);
+            lua_rawseti(L, -2, i + 1);
+        }
     } else {
         lua_pushnil(L);
     }
 
-    mysql_free_result(prepare_meta_result);
+    free(result_bind);
+    free(results);
+    mysql_free_result(meta_result);
     return 1;
 }
 
-// register functions
+// Cleanup function
+static int l_close(lua_State *L) {
+    MySQLStmt *stmt = (MySQLStmt *)luaL_checkudata(L, 1, "MySQLStmt");
+
+    if (stmt->stmt) {
+        mysql_stmt_close(stmt->stmt);
+    }
+
+    for (int i = 0; i < stmt->param_count; i++) {
+        free(stmt->bind[i].buffer);
+    }
+
+    free(stmt->bind);
+    return 0;
+}
+
+// Register functions
 static const luaL_Reg mysqlprep[] = {
     {"connect", l_connect},
     {"prepare", l_prepare},
     {"bind", l_bind},
     {"execute", l_execute},
     {"fetch", l_fetch},
+    {"close", l_close},
     {NULL, NULL}
 };
 
 int luaopen_mysqlprep(lua_State *L) {
     luaL_newmetatable(L, "MySQLConn");
     luaL_newmetatable(L, "MySQLStmt");
+
     luaL_newlib(L, mysqlprep);
     return 1;
 }
